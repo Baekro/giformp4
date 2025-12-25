@@ -98,13 +98,27 @@ export default function ImageConverter() {
           quality: 10,
           width: img.width,
           height: img.height,
-          workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+          workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
+          repeat: 0
         });
 
-        // 2프레임 추가 (정지 이미지처럼 보이지만 실제 애니메이션)
+        // 원본 프레임
         ctx.drawImage(img, 0, 0);
-        gif.addFrame(canvas, { delay: 100 });
-        gif.addFrame(canvas, { delay: 100 });
+        gif.addFrame(canvas, { delay: 1000, copy: true });
+
+        // 미세하게 밝기를 조절한 프레임 (사람 눈에는 거의 안 보임)
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        // 1% 미만의 아주 미세한 밝기 변화
+        for (let i = 0; i < data.length; i += 4) {
+          data[i] = Math.min(255, data[i] + 1);     // R
+          data[i + 1] = Math.min(255, data[i + 1] + 1); // G
+          data[i + 2] = Math.min(255, data[i + 2] + 1); // B
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        gif.addFrame(canvas, { delay: 1000, copy: true });
 
         gif.on('finished', (blob) => {
           const url = URL.createObjectURL(blob);
