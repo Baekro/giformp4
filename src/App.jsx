@@ -14,6 +14,7 @@ export default function ImageConverter() {
   const fileInputRef = useRef(null);
   const ffmpegRef = useRef(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [ffmpegError, setFfmpegError] = useState(false);
   
   // 모바일 감지
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -271,21 +272,26 @@ export default function ImageConverter() {
         return;
       }
 
-      // 모바일에서는 FFmpeg 사용
+      // 모바일에서는 FFmpeg 사용 (로드되지 않았으면 MediaRecorder로 대체)
       if (isMobile) {
-        if (!ffmpegLoaded) {
+        if (!ffmpegLoaded && !ffmpegError) {
           alert('비디오 변환 라이브러리를 로딩 중입니다. 잠시 후 다시 시도해주세요.');
           setIsConverting(false);
           return;
         }
         
-        setConversionStatus('MP4 생성 중...');
-        const mp4Blob = await convertToVideoWithFFmpeg(img);
-        const url = URL.createObjectURL(mp4Blob);
-        setOutputUrl(url);
-        setConversionStatus('');
-        setIsConverting(false);
-        return;
+        // FFmpeg 로드 실패 시 MediaRecorder로 대체
+        if (ffmpegError || !ffmpegRef.current) {
+          // 데스크톱 로직으로 진행
+        } else {
+          setConversionStatus('MP4 생성 중...');
+          const mp4Blob = await convertToVideoWithFFmpeg(img);
+          const url = URL.createObjectURL(mp4Blob);
+          setOutputUrl(url);
+          setConversionStatus('');
+          setIsConverting(false);
+          return;
+        }
       }
 
       // 데스크톱에서는 기존 MediaRecorder 사용
@@ -531,11 +537,13 @@ export default function ImageConverter() {
             <li>• 이미지의 원본 비율이 유지됩니다</li>
             <li>• GIF: 15MB 미만으로 화질이 고정됩니다</li>
             <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다</li>
-            {isMobile && format === 'mp4' && <li>• 모바일: 첫 변환 시 라이브러리 로딩에 시간이 걸릴 수 있습니다</li>}
+            {isMobile && format === 'mp4' && !ffmpegLoaded && !ffmpegError && (
+              <li className="text-yellow-500">• 모바일: 비디오 라이브러리 로딩 중...</li>
+            )}
           </ul>
         </div>
 
-        <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
+         <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
           <p className={`text-xs ${textSecondary}`}>
             오류 제보는{' '}
             <span className="text-blue-500"> bistrobaek@gmail.com</span>
