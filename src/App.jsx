@@ -131,7 +131,6 @@ export default function ImageConverter() {
         gif.on('finished', (blob) => {
           URL.revokeObjectURL(workerUrl);
           const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
-          console.log(`GIF 크기: ${sizeMB}MB`);
           resolve(blob);
         });
 
@@ -221,7 +220,6 @@ export default function ImageConverter() {
       };
 
       mediaRecorder.onerror = (error) => {
-        console.error('녹화 오류:', error);
         throw new Error('생성 실패');
       };
 
@@ -239,7 +237,6 @@ export default function ImageConverter() {
       mediaRecorder.stop();
       
     } catch (error) {
-      console.error('변환 오류:', error);
       alert('변환 중 오류가 발생했습니다: ' + error.message);
       setIsConverting(false);
       setConversionStatus('');
@@ -251,7 +248,7 @@ export default function ImageConverter() {
     
     const a = document.createElement('a');
     a.href = outputUrl;
-    a.download = `converted.${format}`;
+    a.download = `converted_${Date.now()}.${format}`;
     a.click();
   };
 
@@ -419,6 +416,13 @@ export default function ImageConverter() {
             <li>• GIF: 15MB 미만으로 화질이 고정됩니다.</li>
             <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다.</li>
           </ul>
+        </div>
+
+ <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
+          <p className={`text-xs ${textSecondary}`}>
+            오류 제보는 {' '}
+            <span className="text-blue-500">bistrobaek@gmail.com</span>
+          </p>
         </div>
       </div>
     </div>
