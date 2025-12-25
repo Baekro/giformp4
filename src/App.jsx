@@ -12,20 +12,56 @@ export default function ImageConverter() {
   const [isDragging, setIsDragging] = useState(false);
   const [conversionStatus, setConversionStatus] = useState('');
   const fileInputRef = useRef(null);
+  const ffmpegRef = useRef(null);
+  const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  
+  // 모바일 감지
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   useEffect(() => {
     // gif.js 라이브러리 로드
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js';
-    script.async = true;
-    document.body.appendChild(script);
+    const gifScript = document.createElement('script');
+    gifScript.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js';
+    gifScript.async = true;
+    document.body.appendChild(gifScript);
+    
+    // 모바일에서만 FFmpeg 로드
+    if (isMobile) {
+      const loadFFmpeg = async () => {
+        try {
+          const ffmpegScript = document.createElement('script');
+          ffmpegScript.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js';
+          ffmpegScript.async = true;
+          document.body.appendChild(ffmpegScript);
+          
+          ffmpegScript.onload = async () => {
+            const { FFmpeg } = window.FFmpegWASM;
+            const ffmpeg = new FFmpeg();
+            
+            ffmpeg.on('log', ({ message }) => {
+            });
+            
+            await ffmpeg.load({
+              coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
+              wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm',
+            });
+            
+            ffmpegRef.current = ffmpeg;
+            setFfmpegLoaded(true);
+          };
+        } catch (error) {
+        }
+      };
+      
+      loadFFmpeg();
+    }
     
     return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
+      if (document.body.contains(gifScript)) {
+        document.body.removeChild(gifScript);
       }
     };
-  }, []);
+  }, [isMobile]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -80,70 +116,134 @@ export default function ImageConverter() {
           return;
         }
 
-        // Worker 스크립트를 Blob으로 로드하여 CORS 우회
         const workerResponse = await fetch('https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js');
         const workerBlob = await workerResponse.blob();
         const workerUrl = URL.createObjectURL(workerBlob);
 
-        // 이미지 크기 최적화 (최대 800px)
-        const maxSize = 800;
-        const scale = Math.min(1, maxSize / Math.max(imageElement.width, imageElement.height));
-        const width = Math.floor(imageElement.width * scale);
-        const height = Math.floor(imageElement.height * scale);
+        // 이미지 크기 최적화 함수
+        const createGifWithSettings = async (maxSize, quality) => {
+          const scale = Math.min(1, maxSize / Math.max(imageElement.width, imageElement.height));
+          const width = Math.floor(imageElement.width * scale);
+          const height = Math.floor(imageElement.height * scale);
 
-        const gif = new window.GIF({
-          workers: 2,
-          quality: 15, // 품질 낮춤 (10→15, 숫자 높을수록 파일 작음)
-          width: width,
-          height: height,
-          workerScript: workerUrl,
-          repeat: 0
-        });
+          const gif = new window.GIF({
+            workers: 2,
+            quality: quality,
+            width: width,
+            height: height,
+            workerScript: workerUrl,
+            repeat: 0
+          });
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
 
-        // 3초, 15fps = 45프레임 (원래 1초 30프레임보다 프레임 줄임)
-        const fps = 15;
-        const duration = 3;
-        const frames = fps * duration;
-        const delay = Math.floor(1000 / fps);
+          const fps = 15;
+          const duration = 3;
+          const frames = fps * duration;
+          const delay = Math.floor(1000 / fps);
 
-        for (let i = 0; i < frames; i++) {
-          ctx.clearRect(0, 0, width, height);
-          ctx.drawImage(imageElement, 0, 0, width, height);
-          
-          // 미세한 노이즈 추가 (양 줄임)
-          const imageData = ctx.getImageData(0, 0, width, height);
-          const data = imageData.data;
-          
-          for (let j = 0; j < 3; j++) { // 5→3으로 줄임
-            const randomIndex = Math.floor(Math.random() * (data.length / 4)) * 4;
-            data[randomIndex + 3] = Math.max(0, data[randomIndex + 3] - 1);
+          for (let i = 0; i < frames; i++) {
+            ctx.clearRect(0, 0, width, height);
+            ctx.drawImage(imageElement, 0, 0, width, height);
+            
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+            
+            for (let j = 0; j < 3; j++) {
+              const randomIndex = Math.floor(Math.random() * (data.length / 4)) * 4;
+              data[randomIndex + 3] = Math.max(0, data[randomIndex + 3] - 1);
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+            gif.addFrame(ctx, { copy: true, delay: delay });
+          }
+
+          return new Promise((res, rej) => {
+            gif.on('finished', (blob) => res(blob));
+            gif.on('error', (error) => rej(error));
+            gif.render();
+          });
+        };
+
+        // 15MB 제한에 맞추기 위한 반복 시도
+        const maxFileSize = 15 * 1024 * 1024; // 15MB
+        let currentMaxSize = 800;
+        let currentQuality = 15;
+        let gifBlob = null;
+
+        // 첫 시도
+        gifBlob = await createGifWithSettings(currentMaxSize, currentQuality);
+
+        // 15MB 초과 시 크기와 품질 조정
+        while (gifBlob.size > maxFileSize && (currentMaxSize > 400 || currentQuality < 30)) {
+          if (currentMaxSize > 400) {
+            currentMaxSize -= 100; // 해상도 감소
+          } else {
+            currentQuality += 5; // 품질 낮춤 (숫자가 클수록 품질 낮음)
           }
           
-          ctx.putImageData(imageData, 0, 0);
-          gif.addFrame(ctx, { copy: true, delay: delay });
+          setConversionStatus(`GIF 최적화 중... (${(gifBlob.size / 1024 / 1024).toFixed(1)}MB → 15MB 이하)`);
+          gifBlob = await createGifWithSettings(currentMaxSize, currentQuality);
         }
 
-        gif.on('finished', (blob) => {
-          URL.revokeObjectURL(workerUrl);
-          const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
-          resolve(blob);
-        });
+        URL.revokeObjectURL(workerUrl);
+        const sizeMB = (gifBlob.size / 1024 / 1024).toFixed(2);
+        resolve(gifBlob);
 
-        gif.on('error', (error) => {
-          URL.revokeObjectURL(workerUrl);
-          reject(error);
-        });
-
-        gif.render();
       } catch (error) {
         reject(error);
       }
     });
+  };
+
+  const convertToVideoWithFFmpeg = async (img) => {
+    if (!ffmpegRef.current) {
+      throw new Error('FFmpeg가 로드되지 않았습니다');
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    
+    const ffmpeg = ffmpegRef.current;
+    const fps = 30;
+    const totalFrames = duration * fps;
+    
+    // 프레임 생성
+    for (let i = 0; i < totalFrames; i++) {
+      ctx.drawImage(img, 0, 0);
+      
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      
+      await ffmpeg.writeFile(`frame${i.toString().padStart(4, '0')}.png`, uint8Array);
+      
+      if (i % 10 === 0) {
+        setConversionStatus(`MP4 생성 중... ${Math.round((i / totalFrames) * 100)}%`);
+      }
+    }
+    
+    setConversionStatus('MP4 인코딩 중...');
+    
+    // FFmpeg로 MP4 생성
+    await ffmpeg.exec([
+      '-framerate', String(fps),
+      '-i', 'frame%04d.png',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-t', String(duration),
+      'output.mp4'
+    ]);
+    
+    const data = await ffmpeg.readFile('output.mp4');
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    
+    return blob;
   };
 
   const convertToVideo = async () => {
@@ -171,6 +271,24 @@ export default function ImageConverter() {
         return;
       }
 
+      // 모바일에서는 FFmpeg 사용
+      if (isMobile) {
+        if (!ffmpegLoaded) {
+          alert('비디오 변환 라이브러리를 로딩 중입니다. 잠시 후 다시 시도해주세요.');
+          setIsConverting(false);
+          return;
+        }
+        
+        setConversionStatus('MP4 생성 중...');
+        const mp4Blob = await convertToVideoWithFFmpeg(img);
+        const url = URL.createObjectURL(mp4Blob);
+        setOutputUrl(url);
+        setConversionStatus('');
+        setIsConverting(false);
+        return;
+      }
+
+      // 데스크톱에서는 기존 MediaRecorder 사용
       setConversionStatus('MP4 생성 중...');
       
       const canvas = document.createElement('canvas');
@@ -225,9 +343,7 @@ export default function ImageConverter() {
 
       mediaRecorder.start();
       
-      // GIF는 1초, MP4는 사용자 설정
-      const targetDuration = format === 'gif' ? 1 : duration;
-      const frames = targetDuration * 30;
+      const frames = duration * 30;
       
       for (let i = 0; i < frames; i++) {
         ctx.drawImage(img, 0, 0);
@@ -413,14 +529,15 @@ export default function ImageConverter() {
           <ul className={`space-y-2 ${textSecondary} text-sm`}>
             <li>• 트위터, 인스타그램에서 정상 작동합니다</li>
             <li>• 이미지의 원본 비율이 유지됩니다</li>
-            <li>• GIF: 15MB 미만으로 화질이 고정됩니다.</li>
-            <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다.</li>
+            <li>• GIF: 15MB 미만으로 화질이 고정됩니다</li>
+            <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다</li>
+            {isMobile && format === 'mp4' && <li>• 모바일: 첫 변환 시 라이브러리 로딩에 시간이 걸릴 수 있습니다</li>}
           </ul>
         </div>
 
- <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
+        <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
           <p className={`text-xs ${textSecondary}`}>
-            오류 제보는 {' '}
+            오류 제보는{' '}
             <span className="text-blue-500">bistrobaek@gmail.com</span>
           </p>
         </div>
