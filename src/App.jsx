@@ -537,8 +537,8 @@ export default function ImageConverter() {
 
         <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
           <p className={`text-xs ${textSecondary}`}>
-            문제가 있나요? 오류 제보:{' '}
-            <span className="text-blue-500">report@example.com</span>
+            오류 제보는{' '}
+            <span className="text-blue-500"> bistrobaek@gmail.com</span>
           </p>
         </div>
       </div>
