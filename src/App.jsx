@@ -252,18 +252,13 @@ export default function ImageConverter() {
             </>
           )}
 
-          {/* 다운로드 영역 */}
+           {/* 다운로드 영역 */}
           {outputUrl && (
             <div className="mt-8 pt-8 border-t border-zinc-700">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
-                    <Download className="w-6 h-6 text-white" />
-                  </div>
-                  <div>
-                    <p className="font-medium">변환 완료!</p>
-                    <p className={`text-sm ${textSecondary}`}>파일을 다운로드할 수 있습니다</p>
-                  </div>
+                <div>
+                  <p className="font-medium">변환 완료!</p>
+                  <p className={`text-sm ${textSecondary}`}>파일을 다운로드할 수 있습니다</p>
                 </div>
                 <button
                   onClick={downloadFile}
