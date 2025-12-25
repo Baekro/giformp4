@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, Moon, Sun, Film, Loader } from 'lucide-react';
 
 export default function ImageConverter() {
@@ -10,7 +10,18 @@ export default function ImageConverter() {
   const [isConverting, setIsConverting] = useState(false);
   const [outputUrl, setOutputUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [gifjs, setGifjs] = useState(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    // GIF.js 라이브러리 동적 로드
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+    script.onload = () => {
+      setGifjs(window.GIF);
+    };
+    document.body.appendChild(script);
+  }, []);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -76,12 +87,32 @@ export default function ImageConverter() {
       const ctx = canvas.getContext('2d');
 
       if (format === 'gif') {
+        if (!gifjs) {
+          alert('GIF 라이브러리 로딩 중입니다. 잠시 후 다시 시도해주세요.');
+          setIsConverting(false);
+          return;
+        }
+
+        const gif = new gifjs({
+          workers: 2,
+          quality: 10,
+          width: img.width,
+          height: img.height,
+          workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+        });
+
+        // 2프레임 추가 (정지 이미지처럼 보이지만 실제 애니메이션)
         ctx.drawImage(img, 0, 0);
-        canvas.toBlob((blob) => {
+        gif.addFrame(canvas, { delay: 100 });
+        gif.addFrame(canvas, { delay: 100 });
+
+        gif.on('finished', (blob) => {
           const url = URL.createObjectURL(blob);
           setOutputUrl(url);
           setIsConverting(false);
-        }, 'image/gif');
+        });
+
+        gif.render();
       } else {
         const stream = canvas.captureStream(30);
         const mediaRecorder = new MediaRecorder(stream, {
@@ -252,7 +283,7 @@ export default function ImageConverter() {
             </>
           )}
 
-           {/* 다운로드 영역 */}
+          {/* 다운로드 영역 */}
           {outputUrl && (
             <div className="mt-8 pt-8 border-t border-zinc-700">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
