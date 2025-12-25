@@ -10,18 +10,7 @@ export default function ImageConverter() {
   const [isConverting, setIsConverting] = useState(false);
   const [outputUrl, setOutputUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [gifjs, setGifjs] = useState(null);
   const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    // GIF.js 라이브러리 동적 로드
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
-    script.onload = () => {
-      setGifjs(window.GIF);
-    };
-    document.body.appendChild(script);
-  }, []);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -81,53 +70,50 @@ export default function ImageConverter() {
         img.onload = resolve;
       });
 
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-
       if (format === 'gif') {
-        if (!gifjs) {
-          alert('GIF 라이브러리 로딩 중입니다. 잠시 후 다시 시도해주세요.');
-          setIsConverting(false);
-          return;
-        }
+        // MediaRecorder를 사용한 WebM 기반 GIF 대안
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
 
-        const gif = new gifjs({
-          workers: 2,
-          quality: 10,
-          width: img.width,
-          height: img.height,
-          workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
-          repeat: 0
+        const stream = canvas.captureStream(1); // 1 FPS
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'video/webm;codecs=vp8',
+          videoBitsPerSecond: 100000
         });
 
-        // 원본 프레임
-        ctx.drawImage(img, 0, 0);
-        gif.addFrame(canvas, { delay: 1000, copy: true });
-
-        // 미세하게 밝기를 조절한 프레임 (사람 눈에는 거의 안 보임)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        // 1% 미만의 아주 미세한 밝기 변화
-        for (let i = 0; i < data.length; i += 4) {
-          data[i] = Math.min(255, data[i] + 1);     // R
-          data[i + 1] = Math.min(255, data[i + 1] + 1); // G
-          data[i + 2] = Math.min(255, data[i + 2] + 1); // B
-        }
-        
-        ctx.putImageData(imageData, 0, 0);
-        gif.addFrame(canvas, { delay: 1000, copy: true });
-
-        gif.on('finished', (blob) => {
+        const chunks = [];
+        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'image/gif' });
           const url = URL.createObjectURL(blob);
           setOutputUrl(url);
           setIsConverting(false);
-        });
+        };
 
-        gif.render();
+        mediaRecorder.start();
+
+        // 2개의 미세하게 다른 프레임 생성
+        ctx.drawImage(img, 0, 0);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // 미세한 변화 추가 (육안으로 거의 구별 불가)
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          imageData.data[i] = Math.min(255, imageData.data[i] + 1);
+        }
+        ctx.putImageData(imageData, 0, 0);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        mediaRecorder.stop();
       } else {
+        // MP4 변환
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
         const stream = canvas.captureStream(30);
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: 'video/webm;codecs=vp9',
@@ -152,6 +138,7 @@ export default function ImageConverter() {
       }
     } catch (error) {
       console.error('변환 오류:', error);
+      alert('변환 중 오류가 발생했습니다: ' + error.message);
       setIsConverting(false);
     }
   };
@@ -161,7 +148,7 @@ export default function ImageConverter() {
     
     const a = document.createElement('a');
     a.href = outputUrl;
-    a.download = `converted.${format === 'mp4' ? 'webm' : 'gif'}`;
+    a.download = `converted.${format === 'mp4' ? 'webm' : format}`;
     a.click();
   };
 
