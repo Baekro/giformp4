@@ -10,7 +10,22 @@ export default function ImageConverter() {
   const [isConverting, setIsConverting] = useState(false);
   const [outputUrl, setOutputUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [conversionStatus, setConversionStatus] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    // gif.js 라이브러리 로드
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js';
+    script.async = true;
+    document.body.appendChild(script);
+    
+    return () => {
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, []);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -57,89 +72,177 @@ export default function ImageConverter() {
     }
   };
 
+  const convertToGif = async (imageElement) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        if (!window.GIF) {
+          reject(new Error('GIF 라이브러리 로딩 대기 중...'));
+          return;
+        }
+
+        // Worker 스크립트를 Blob으로 로드하여 CORS 우회
+        const workerResponse = await fetch('https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js');
+        const workerBlob = await workerResponse.blob();
+        const workerUrl = URL.createObjectURL(workerBlob);
+
+        // 이미지 크기 최적화 (최대 800px)
+        const maxSize = 800;
+        const scale = Math.min(1, maxSize / Math.max(imageElement.width, imageElement.height));
+        const width = Math.floor(imageElement.width * scale);
+        const height = Math.floor(imageElement.height * scale);
+
+        const gif = new window.GIF({
+          workers: 2,
+          quality: 15, // 품질 낮춤 (10→15, 숫자 높을수록 파일 작음)
+          width: width,
+          height: height,
+          workerScript: workerUrl,
+          repeat: 0
+        });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        // 3초, 15fps = 45프레임 (원래 1초 30프레임보다 프레임 줄임)
+        const fps = 15;
+        const duration = 3;
+        const frames = fps * duration;
+        const delay = Math.floor(1000 / fps);
+
+        for (let i = 0; i < frames; i++) {
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(imageElement, 0, 0, width, height);
+          
+          // 미세한 노이즈 추가 (양 줄임)
+          const imageData = ctx.getImageData(0, 0, width, height);
+          const data = imageData.data;
+          
+          for (let j = 0; j < 3; j++) { // 5→3으로 줄임
+            const randomIndex = Math.floor(Math.random() * (data.length / 4)) * 4;
+            data[randomIndex + 3] = Math.max(0, data[randomIndex + 3] - 1);
+          }
+          
+          ctx.putImageData(imageData, 0, 0);
+          gif.addFrame(ctx, { copy: true, delay: delay });
+        }
+
+        gif.on('finished', (blob) => {
+          URL.revokeObjectURL(workerUrl);
+          const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+          console.log(`GIF 크기: ${sizeMB}MB`);
+          resolve(blob);
+        });
+
+        gif.on('error', (error) => {
+          URL.revokeObjectURL(workerUrl);
+          reject(error);
+        });
+
+        gif.render();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
   const convertToVideo = async () => {
     if (!file) return;
     
     setIsConverting(true);
+    setOutputUrl(null);
     
     try {
       const img = new Image();
       img.src = preview;
       
-      await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
         img.onload = resolve;
+        img.onerror = reject;
       });
 
       if (format === 'gif') {
-        // MediaRecorder를 사용한 WebM 기반 GIF 대안
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-
-        const stream = canvas.captureStream(1); // 1 FPS
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp8',
-          videoBitsPerSecond: 100000
-        });
-
-        const chunks = [];
-        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'image/gif' });
-          const url = URL.createObjectURL(blob);
-          setOutputUrl(url);
-          setIsConverting(false);
-        };
-
-        mediaRecorder.start();
-
-        // 2개의 미세하게 다른 프레임 생성
-        ctx.drawImage(img, 0, 0);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // 미세한 변화 추가 (육안으로 거의 구별 불가)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < imageData.data.length; i += 4) {
-          imageData.data[i] = Math.min(255, imageData.data[i] + 1);
-        }
-        ctx.putImageData(imageData, 0, 0);
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        mediaRecorder.stop();
-      } else {
-        // MP4 변환
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-
-        const stream = canvas.captureStream(30);
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp9',
-          videoBitsPerSecond: 5000000
-        });
-
-        const chunks = [];
-        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          const url = URL.createObjectURL(blob);
-          setOutputUrl(url);
-          setIsConverting(false);
-        };
-
-        mediaRecorder.start();
-        ctx.drawImage(img, 0, 0);
-
-        setTimeout(() => {
-          mediaRecorder.stop();
-        }, duration * 1000);
+        setConversionStatus('GIF 생성 중...');
+        const gifBlob = await convertToGif(img);
+        const url = URL.createObjectURL(gifBlob);
+        setOutputUrl(url);
+        setConversionStatus('');
+        setIsConverting(false);
+        return;
       }
+
+      setConversionStatus('MP4 생성 중...');
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+
+      const stream = canvas.captureStream(30);
+      
+      const mimeTypes = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/webm;codecs=h264,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm'
+      ];
+      
+      let selectedMimeType = null;
+      for (const type of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          selectedMimeType = type;
+          break;
+        }
+      }
+      
+      if (!selectedMimeType) {
+        throw new Error('브라우저가 동영상 녹화를 지원하지 않습니다');
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: selectedMimeType,
+        videoBitsPerSecond: 2500000
+      });
+
+      const chunks = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/mp4' });
+        const url = URL.createObjectURL(blob);
+        setOutputUrl(url);
+        setConversionStatus('');
+        setIsConverting(false);
+      };
+
+      mediaRecorder.onerror = (error) => {
+        console.error('녹화 오류:', error);
+        throw new Error('생성 실패');
+      };
+
+      mediaRecorder.start();
+      
+      // GIF는 1초, MP4는 사용자 설정
+      const targetDuration = format === 'gif' ? 1 : duration;
+      const frames = targetDuration * 30;
+      
+      for (let i = 0; i < frames; i++) {
+        ctx.drawImage(img, 0, 0);
+        await new Promise(resolve => setTimeout(resolve, 33));
+      }
+
+      mediaRecorder.stop();
+      
     } catch (error) {
       console.error('변환 오류:', error);
       alert('변환 중 오류가 발생했습니다: ' + error.message);
       setIsConverting(false);
+      setConversionStatus('');
     }
   };
 
@@ -148,7 +251,7 @@ export default function ImageConverter() {
     
     const a = document.createElement('a');
     a.href = outputUrl;
-    a.download = `converted.${format === 'mp4' ? 'webm' : format}`;
+    a.download = `converted.${format}`;
     a.click();
   };
 
@@ -161,7 +264,6 @@ export default function ImageConverter() {
   return (
     <div className={`min-h-screen ${bgColor} ${textColor} transition-colors duration-200`}>
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        {/* 헤더 */}
         <div className="flex justify-between items-center mb-12">
           <div className="flex items-center gap-3">
             <Film className="w-8 h-8" />
@@ -176,9 +278,7 @@ export default function ImageConverter() {
           </button>
         </div>
 
-        {/* 메인 컨텐츠 */}
         <div className={`${cardBg} rounded-2xl p-6 md:p-8 mb-6`}>
-          {/* 파일 업로드 영역 */}
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragEnter={handleDragEnter}
@@ -215,28 +315,35 @@ export default function ImageConverter() {
 
           {file && (
             <>
-              {/* 옵션 설정 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
                 <div>
                   <label className={`block text-sm font-medium mb-2 ${textSecondary}`}>
-                    출력 포맷
+                    출력 타입
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
-                      onClick={() => setFormat('mp4')}
+                      onClick={() => {
+                        setFormat('mp4');
+                        setOutputUrl(null);
+                      }}
                       className={`p-4 rounded-xl transition-colors ${format === 'mp4' ? buttonBg : isDark ? 'bg-zinc-700' : 'bg-gray-200'}`}
                     >
                       <Film className="w-6 h-6 mx-auto mb-2" />
                       <span className="text-sm font-medium">MP4</span>
+                      <span className="text-xs block mt-1 opacity-70">3~10초</span>
                     </button>
                     <button
-                      onClick={() => setFormat('gif')}
+                      onClick={() => {
+                        setFormat('gif');
+                        setOutputUrl(null);
+                      }}
                       className={`p-4 rounded-xl transition-colors ${format === 'gif' ? buttonBg : isDark ? 'bg-zinc-700' : 'bg-gray-200'}`}
                     >
                       <svg className="w-6 h-6 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
                       <span className="text-sm font-medium">GIF</span>
+                      <span className="text-xs block mt-1 opacity-70">무한루프</span>
                     </button>
                   </div>
                 </div>
@@ -263,16 +370,15 @@ export default function ImageConverter() {
                 )}
               </div>
 
-              {/* 변환 버튼 */}
               <button
                 onClick={convertToVideo}
                 disabled={isConverting}
-                className={`w-full mt-8 ${buttonBg} text-white py-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed`}
+                className={`w-full mt-6 ${buttonBg} text-white py-4 rounded-xl font-medium transition-colors flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {isConverting ? (
                   <>
                     <Loader className="w-5 h-5 animate-spin" />
-                    변환 중...
+                    {conversionStatus || '변환 중...'}
                   </>
                 ) : (
                   <>
@@ -284,13 +390,14 @@ export default function ImageConverter() {
             </>
           )}
 
-          {/* 다운로드 영역 */}
           {outputUrl && (
             <div className="mt-8 pt-8 border-t border-zinc-700">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                 <div>
                   <p className="font-medium">변환 완료!</p>
-                  <p className={`text-sm ${textSecondary}`}>파일을 다운로드할 수 있습니다</p>
+                  <p className={`text-sm ${textSecondary}`}>
+                    {format.toUpperCase()} 파일이 생성되었습니다
+                  </p>
                 </div>
                 <button
                   onClick={downloadFile}
@@ -304,14 +411,13 @@ export default function ImageConverter() {
           )}
         </div>
 
-        {/* 안내 사항 */}
         <div className={`${cardBg} rounded-2xl p-6`}>
           <h2 className="font-semibold mb-4">사용 안내</h2>
           <ul className={`space-y-2 ${textSecondary} text-sm`}>
-            <li>• 이미지의 원본 해상도와 비율이 유지됩니다</li>
-            <li>• MP4 포맷은 정지 이미지를 지정된 시간만큼 재생합니다</li>
-            <li>• GIF 포맷은 단일 프레임 이미지로 변환됩니다</li>
-            <li>• 모든 변환은 브라우저에서 로컬로 처리됩니다</li>
+            <li>• 트위터, 인스타그램에서 정상 작동합니다</li>
+            <li>• 이미지의 원본 비율이 유지됩니다</li>
+            <li>• GIF: 15MB 미만으로 화질이 고정됩니다.</li>
+            <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다.</li>
           </ul>
         </div>
       </div>
