@@ -1,32 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Moon, Sun, Film, Loader } from 'lucide-react';
+import { Upload, Download, Moon, Sun, Film, Loader, Images, X } from 'lucide-react';
 
 export default function ImageConverter() {
   const [isDark, setIsDark] = useState(true);
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [files, setFiles] = useState([]);
   const [format, setFormat] = useState('mp4');
   const [duration, setDuration] = useState(3);
   const [isConverting, setIsConverting] = useState(false);
-  const [outputUrl, setOutputUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [conversionStatus, setConversionStatus] = useState('');
+  const [currentConvertingIndex, setCurrentConvertingIndex] = useState(-1);
+  const [gallery, setGallery] = useState([]);
+  const [showGallery, setShowGallery] = useState(false);
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
   const fileInputRef = useRef(null);
   const ffmpegRef = useRef(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
   const [ffmpegError, setFfmpegError] = useState(false);
-  
-  // 모바일 감지
+
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   useEffect(() => {
-    // gif.js 라이브러리 로드
     const gifScript = document.createElement('script');
     gifScript.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js';
     gifScript.async = true;
     document.body.appendChild(gifScript);
-    
-    // 모바일에서만 FFmpeg 로드
+
     if (isMobile) {
       const loadFFmpeg = async () => {
         try {
@@ -34,29 +33,29 @@ export default function ImageConverter() {
           ffmpegScript.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js';
           ffmpegScript.async = true;
           document.body.appendChild(ffmpegScript);
-          
+
           ffmpegScript.onload = async () => {
             const { FFmpeg } = window.FFmpegWASM;
             const ffmpeg = new FFmpeg();
-            
+
             ffmpeg.on('log', ({ message }) => {
             });
-            
+
             await ffmpeg.load({
               coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
               wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm',
             });
-            
+
             ffmpegRef.current = ffmpeg;
             setFfmpegLoaded(true);
           };
         } catch (error) {
         }
       };
-      
+
       loadFFmpeg();
     }
-    
+
     return () => {
       if (document.body.contains(gifScript)) {
         document.body.removeChild(gifScript);
@@ -65,15 +64,16 @@ export default function ImageConverter() {
   }, [isMobile]);
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile && selectedFile.type.startsWith('image/')) {
-      setFile(selectedFile);
-      setOutputUrl(null);
-      
-      const reader = new FileReader();
-      reader.onload = (e) => setPreview(e.target.result);
-      reader.readAsDataURL(selectedFile);
-    }
+    const selectedFiles = Array.from(e.target.files);
+    const imageFiles = selectedFiles.filter(file => file.type.startsWith('image/'));
+
+    const filesWithPreviews = imageFiles.map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      id: Date.now() + Math.random()
+    }));
+
+    setFiles(prev => [...prev, ...filesWithPreviews]);
   };
 
   const handleDragEnter = (e) => {
@@ -98,15 +98,16 @@ export default function ImageConverter() {
     e.stopPropagation();
     setIsDragging(false);
 
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && droppedFile.type.startsWith('image/')) {
-      setFile(droppedFile);
-      setOutputUrl(null);
-      
-      const reader = new FileReader();
-      reader.onload = (e) => setPreview(e.target.result);
-      reader.readAsDataURL(droppedFile);
-    }
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const imageFiles = droppedFiles.filter(file => file.type.startsWith('image/'));
+
+    const filesWithPreviews = imageFiles.map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      id: Date.now() + Math.random()
+    }));
+
+    setFiles(prev => [...prev, ...filesWithPreviews]);
   };
 
   const convertToGif = async (imageElement) => {
@@ -121,7 +122,6 @@ export default function ImageConverter() {
         const workerBlob = await workerResponse.blob();
         const workerUrl = URL.createObjectURL(workerBlob);
 
-        // 이미지 크기 최적화 함수
         const createGifWithSettings = async (maxSize, quality) => {
           const scale = Math.min(1, maxSize / Math.max(imageElement.width, imageElement.height));
           const width = Math.floor(imageElement.width * scale);
@@ -149,15 +149,15 @@ export default function ImageConverter() {
           for (let i = 0; i < frames; i++) {
             ctx.clearRect(0, 0, width, height);
             ctx.drawImage(imageElement, 0, 0, width, height);
-            
+
             const imageData = ctx.getImageData(0, 0, width, height);
             const data = imageData.data;
-            
+
             for (let j = 0; j < 3; j++) {
               const randomIndex = Math.floor(Math.random() * (data.length / 4)) * 4;
               data[randomIndex + 3] = Math.max(0, data[randomIndex + 3] - 1);
             }
-            
+
             ctx.putImageData(imageData, 0, 0);
             gif.addFrame(ctx, { copy: true, delay: delay });
           }
@@ -169,23 +169,20 @@ export default function ImageConverter() {
           });
         };
 
-        // 15MB 제한에 맞추기 위한 반복 시도
-        const maxFileSize = 15 * 1024 * 1024; // 15MB
+        const maxFileSize = 15 * 1024 * 1024;
         let currentMaxSize = 800;
         let currentQuality = 15;
         let gifBlob = null;
 
-        // 첫 시도
         gifBlob = await createGifWithSettings(currentMaxSize, currentQuality);
 
-        // 15MB 초과 시 크기와 품질 조정
         while (gifBlob.size > maxFileSize && (currentMaxSize > 400 || currentQuality < 30)) {
           if (currentMaxSize > 400) {
-            currentMaxSize -= 100; // 해상도 감소
+            currentMaxSize -= 100;
           } else {
-            currentQuality += 5; // 품질 낮춤 (숫자가 클수록 품질 낮음)
+            currentQuality += 5;
           }
-          
+
           setConversionStatus(`GIF 최적화 중... (${(gifBlob.size / 1024 / 1024).toFixed(1)}MB → 15MB 이하)`);
           gifBlob = await createGifWithSettings(currentMaxSize, currentQuality);
         }
@@ -209,29 +206,27 @@ export default function ImageConverter() {
     canvas.width = img.width;
     canvas.height = img.height;
     const ctx = canvas.getContext('2d');
-    
+
     const ffmpeg = ffmpegRef.current;
     const fps = 30;
     const totalFrames = duration * fps;
-    
-    // 프레임 생성
+
     for (let i = 0; i < totalFrames; i++) {
       ctx.drawImage(img, 0, 0);
-      
+
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       const arrayBuffer = await blob.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
-      
+
       await ffmpeg.writeFile(`frame${i.toString().padStart(4, '0')}.png`, uint8Array);
-      
+
       if (i % 10 === 0) {
         setConversionStatus(`MP4 생성 중... ${Math.round((i / totalFrames) * 100)}%`);
       }
     }
-    
+
     setConversionStatus('MP4 인코딩 중...');
-    
-    // FFmpeg로 MP4 생성
+
     await ffmpeg.exec([
       '-framerate', String(fps),
       '-i', 'frame%04d.png',
@@ -240,138 +235,174 @@ export default function ImageConverter() {
       '-t', String(duration),
       'output.mp4'
     ]);
-    
+
     const data = await ffmpeg.readFile('output.mp4');
     const blob = new Blob([data.buffer], { type: 'video/mp4' });
-    
+
     return blob;
   };
 
   const convertToVideo = async () => {
-    if (!file) return;
-    
+    if (files.length === 0) return;
+
     setIsConverting(true);
-    setOutputUrl(null);
-    
-    try {
-      const img = new Image();
-      img.src = preview;
-      
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-      });
+    setShowGallery(false);
+    const convertedItems = [];
 
-      if (format === 'gif') {
-        setConversionStatus('GIF 생성 중...');
-        const gifBlob = await convertToGif(img);
-        const url = URL.createObjectURL(gifBlob);
-        setOutputUrl(url);
-        setConversionStatus('');
-        setIsConverting(false);
-        return;
-      }
+    for (let i = 0; i < files.length; i++) {
+      setCurrentConvertingIndex(i);
+      const fileItem = files[i];
 
-      // 모바일에서는 FFmpeg 사용 (로드되지 않았으면 MediaRecorder로 대체)
-      if (isMobile) {
-        if (!ffmpegLoaded && !ffmpegError) {
-          alert('비디오 변환 라이브러리를 로딩 중입니다. 잠시 후 다시 시도해주세요.');
-          setIsConverting(false);
-          return;
-        }
-        
-        // FFmpeg 로드 실패 시 MediaRecorder로 대체
-        if (ffmpegError || !ffmpegRef.current) {
-          // 데스크톱 로직으로 진행
+      try {
+        const img = new Image();
+        img.src = fileItem.preview;
+
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+
+        if (format === 'gif') {
+          setConversionStatus(`GIF 생성 중... (${i + 1}/${files.length})`);
+          const gifBlob = await convertToGif(img);
+          const url = URL.createObjectURL(gifBlob);
+          convertedItems.push({
+            originalPreview: fileItem.preview,
+            outputUrl: url,
+            format: 'gif',
+            id: fileItem.id
+          });
         } else {
-          setConversionStatus('MP4 생성 중...');
-          const mp4Blob = await convertToVideoWithFFmpeg(img);
-          const url = URL.createObjectURL(mp4Blob);
-          setOutputUrl(url);
-          setConversionStatus('');
-          setIsConverting(false);
-          return;
+          if (isMobile) {
+            if (!ffmpegLoaded && !ffmpegError) {
+              alert('비디오 변환 라이브러리를 로딩 중입니다. 잠시 후 다시 시도해주세요.');
+              setIsConverting(false);
+              setCurrentConvertingIndex(-1);
+              return;
+            }
+
+            if (!ffmpegError && ffmpegRef.current) {
+              setConversionStatus(`MP4 생성 중... (${i + 1}/${files.length})`);
+              const mp4Blob = await convertToVideoWithFFmpeg(img);
+              const url = URL.createObjectURL(mp4Blob);
+              convertedItems.push({
+                originalPreview: fileItem.preview,
+                outputUrl: url,
+                format: 'mp4',
+                id: fileItem.id
+              });
+              continue;
+            }
+          }
+
+          setConversionStatus(`MP4 생성 중... (${i + 1}/${files.length})`);
+
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+
+          const stream = canvas.captureStream(30);
+
+          const mimeTypes = [
+            'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+            'video/webm;codecs=h264,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm'
+          ];
+
+          let selectedMimeType = null;
+          for (const type of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(type)) {
+              selectedMimeType = type;
+              break;
+            }
+          }
+
+          if (!selectedMimeType) {
+            throw new Error('브라우저가 동영상 녹화를 지원하지 않습니다');
+          }
+
+          const url = await new Promise((resolve, reject) => {
+            const mediaRecorder = new MediaRecorder(stream, {
+              mimeType: selectedMimeType,
+              videoBitsPerSecond: 2500000
+            });
+
+            const chunks = [];
+            mediaRecorder.ondataavailable = (e) => {
+              if (e.data.size > 0) {
+                chunks.push(e.data);
+              }
+            };
+
+            mediaRecorder.onstop = () => {
+              const blob = new Blob(chunks, { type: 'video/mp4' });
+              const url = URL.createObjectURL(blob);
+              resolve(url);
+            };
+
+            mediaRecorder.onerror = (error) => {
+              reject(new Error('생성 실패'));
+            };
+
+            mediaRecorder.start();
+
+            const frames = duration * 30;
+
+            (async () => {
+              for (let j = 0; j < frames; j++) {
+                ctx.drawImage(img, 0, 0);
+                await new Promise(resolve => setTimeout(resolve, 33));
+              }
+              mediaRecorder.stop();
+            })();
+          });
+
+          convertedItems.push({
+            originalPreview: fileItem.preview,
+            outputUrl: url,
+            format: 'mp4',
+            id: fileItem.id
+          });
         }
+      } catch (error) {
+        console.error(`파일 ${i + 1} 변환 실패:`, error);
       }
-
-      // 데스크톱에서는 기존 MediaRecorder 사용
-      setConversionStatus('MP4 생성 중...');
-      
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-
-      const stream = canvas.captureStream(30);
-      
-      const mimeTypes = [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/webm;codecs=h264,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm'
-      ];
-      
-      let selectedMimeType = null;
-      for (const type of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          selectedMimeType = type;
-          break;
-        }
-      }
-      
-      if (!selectedMimeType) {
-        throw new Error('브라우저가 동영상 녹화를 지원하지 않습니다');
-      }
-
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: selectedMimeType,
-        videoBitsPerSecond: 2500000
-      });
-
-      const chunks = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
-      
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/mp4' });
-        const url = URL.createObjectURL(blob);
-        setOutputUrl(url);
-        setConversionStatus('');
-        setIsConverting(false);
-      };
-
-      mediaRecorder.onerror = (error) => {
-        throw new Error('생성 실패');
-      };
-
-      mediaRecorder.start();
-      
-      const frames = duration * 30;
-      
-      for (let i = 0; i < frames; i++) {
-        ctx.drawImage(img, 0, 0);
-        await new Promise(resolve => setTimeout(resolve, 33));
-      }
-
-      mediaRecorder.stop();
-      
-    } catch (error) {
-      alert('변환 중 오류가 발생했습니다: ' + error.message);
-      setIsConverting(false);
-      setConversionStatus('');
     }
+
+    setGallery(convertedItems);
+    setIsConverting(false);
+    setCurrentConvertingIndex(-1);
+    setConversionStatus('');
+    setShowGallery(true);
   };
 
-  const downloadFile = () => {
-    if (!outputUrl) return;
-    
+  const downloadFile = (url, index) => {
+    if (!url) return;
+
     const a = document.createElement('a');
-    a.href = outputUrl;
-    a.download = `converted_${Date.now()}.${format}`;
+    a.href = url;
+    a.download = `converted_${index + 1}_${Date.now()}.${format}`;
     a.click();
+  };
+
+  const downloadAllFiles = () => {
+    gallery.forEach((item, index) => {
+      setTimeout(() => {
+        downloadFile(item.outputUrl, index);
+      }, index * 500);
+    });
+  };
+
+  const removeFile = (id) => {
+    setFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  const clearAll = () => {
+    setFiles([]);
+    setGallery([]);
+    setShowGallery(false);
   };
 
   const bgColor = isDark ? 'bg-zinc-900' : 'bg-gray-50';
@@ -388,13 +419,27 @@ export default function ImageConverter() {
             <Film className="w-8 h-8" />
             <h1 className="text-2xl md:text-3xl font-bold">이미지 변환기</h1>
           </div>
-          <button
-            onClick={() => setIsDark(!isDark)}
-            className={`p-3 rounded-full ${cardBg} transition-colors`}
-            aria-label="테마 변경"
-          >
-            {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
+          <div className="flex items-center gap-2">
+            {gallery.length > 0 && (
+              <button
+                onClick={() => setShowGalleryModal(true)}
+                className={`p-3 rounded-full ${cardBg} transition-colors relative`}
+                aria-label="갤러리 보기"
+              >
+                <Images className="w-5 h-5" />
+                <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-medium">
+                  {gallery.length}
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => setIsDark(!isDark)}
+              className={`p-3 rounded-full ${cardBg} transition-colors`}
+              aria-label="테마 변경"
+            >
+              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
 
         <div className={`${cardBg} rounded-2xl p-6 md:p-8 mb-6`}>
@@ -404,37 +449,81 @@ export default function ImageConverter() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`border-2 border-dashed ${
-              isDragging 
-                ? (isDark ? 'border-blue-500 bg-blue-500/10' : 'border-blue-400 bg-blue-400/10')
-                : (isDark ? 'border-zinc-700' : 'border-gray-300')
-            } rounded-xl p-12 text-center cursor-pointer transition-all ${
-              isDark ? 'hover:border-blue-500' : 'hover:border-blue-400'
-            }`}
+            className={`border-2 border-dashed ${isDragging
+              ? (isDark ? 'border-blue-500 bg-blue-500/10' : 'border-blue-400 bg-blue-400/10')
+              : (isDark ? 'border-zinc-700' : 'border-gray-300')
+              } rounded-xl p-12 text-center cursor-pointer transition-all ${isDark ? 'hover:border-blue-500' : 'hover:border-blue-400'
+              }`}
           >
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              multiple
               onChange={handleFileChange}
               className="hidden"
             />
-            {preview ? (
-              <img src={preview} alt="미리보기" className="max-h-64 mx-auto rounded-lg" />
-            ) : (
+            {files.length === 0 ? (
               <div className="flex flex-col items-center gap-4">
                 <Upload className={`w-16 h-16 ${textSecondary} ${isDragging ? 'scale-110' : ''} transition-transform`} />
                 <p className={`text-lg ${textSecondary}`}>
                   {isDragging ? '여기에 놓으세요' : '이미지를 클릭하거나 드래그하여 업로드'}
                 </p>
-                <p className={`text-sm ${textSecondary}`}>PNG, JPG, WEBP 지원</p>
+                <p className={`text-sm ${textSecondary}`}>PNG, JPG, WEBP 지원 (다중 선택 가능)</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {files.map((fileItem, index) => (
+                  <div key={fileItem.id} className="relative group">
+                    <img
+                      src={fileItem.preview}
+                      alt={`미리보기 ${index + 1}`}
+                      className="w-full h-32 object-cover rounded-lg"
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFile(fileItem.id);
+                      }}
+                      className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ×
+                    </button>
+                    {currentConvertingIndex === index && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg">
+                        <Loader className="w-6 h-6 animate-spin text-white" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div
+                  className={`border-2 border-dashed ${isDark ? 'border-zinc-600' : 'border-gray-400'} rounded-lg h-32 flex items-center justify-center cursor-pointer hover:border-blue-500 transition-colors`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <Upload className="w-8 h-8" />
+                </div>
               </div>
             )}
           </div>
 
-          {file && (
+          {files.length > 0 && (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+              <div className="flex justify-between items-center mt-6 mb-4">
+                <p className={`text-sm ${textSecondary}`}>
+                  {files.length}개의 이미지 선택됨
+                </p>
+                <button
+                  onClick={clearAll}
+                  className={`text-sm ${isDark ? 'text-red-400 hover:text-red-300' : 'text-red-600 hover:text-red-700'}`}
+                >
+                  전체 삭제
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className={`block text-sm font-medium mb-2 ${textSecondary}`}>
                     출력 타입
@@ -443,7 +532,8 @@ export default function ImageConverter() {
                     <button
                       onClick={() => {
                         setFormat('mp4');
-                        setOutputUrl(null);
+                        setGallery([]);
+                        setShowGallery(false);
                       }}
                       className={`p-4 rounded-xl transition-colors ${format === 'mp4' ? buttonBg : isDark ? 'bg-zinc-700' : 'bg-gray-200'}`}
                     >
@@ -454,7 +544,8 @@ export default function ImageConverter() {
                     <button
                       onClick={() => {
                         setFormat('gif');
-                        setOutputUrl(null);
+                        setGallery([]);
+                        setShowGallery(false);
                       }}
                       className={`p-4 rounded-xl transition-colors ${format === 'gif' ? buttonBg : isDark ? 'bg-zinc-700' : 'bg-gray-200'}`}
                     >
@@ -502,33 +593,71 @@ export default function ImageConverter() {
                 ) : (
                   <>
                     <Film className="w-5 h-5" />
-                    {format.toUpperCase()}로 변환
+                    {format.toUpperCase()}로 변환 ({files.length}개)
                   </>
                 )}
               </button>
             </>
           )}
-
-          {outputUrl && (
-            <div className="mt-8 pt-8 border-t border-zinc-700">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium">변환 완료!</p>
-                  <p className={`text-sm ${textSecondary}`}>
-                    {format.toUpperCase()} 파일이 생성되었습니다
-                  </p>
-                </div>
-                <button
-                  onClick={downloadFile}
-                  className={`${buttonBg} text-white px-6 py-3 rounded-xl font-medium transition-colors flex items-center gap-2`}
-                >
-                  <Download className="w-5 h-5" />
-                  다운로드
-                </button>
-              </div>
-            </div>
-          )}
         </div>
+
+        {showGallery && gallery.length > 0 && (
+          <div className={`${cardBg} rounded-2xl p-6 md:p-8 mb-6`}>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">변환된 파일 ({gallery.length}개)</h2>
+              <button
+                onClick={downloadAllFiles}
+                className={`${buttonBg} text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 text-sm`}
+              >
+                <Download className="w-4 h-4" />
+                전체 다운로드
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {gallery.map((item, index) => (
+                <div key={item.id} className={`${isDark ? 'bg-zinc-700' : 'bg-gray-100'} rounded-xl p-4`}>
+                  <div className="mb-3">
+                    <p className={`text-xs ${textSecondary} mb-2`}>원본</p>
+                    <img
+                      src={item.originalPreview}
+                      alt={`원본 ${index + 1}`}
+                      className="w-full h-32 object-cover rounded-lg"
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <p className={`text-xs ${textSecondary} mb-2`}>변환됨 ({item.format.toUpperCase()})</p>
+                    {item.format === 'gif' ? (
+                      <img
+                        src={item.outputUrl}
+                        alt={`변환됨 ${index + 1}`}
+                        className="w-full h-32 object-cover rounded-lg"
+                      />
+                    ) : (
+                      <video
+                        src={item.outputUrl}
+                        className="w-full h-32 object-cover rounded-lg"
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                      />
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => downloadFile(item.outputUrl, index)}
+                    className={`w-full ${buttonBg} text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm`}
+                  >
+                    <Download className="w-4 h-4" />
+                    다운로드
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className={`${cardBg} rounded-2xl p-6`}>
           <h2 className="font-semibold mb-4">사용 안내</h2>
@@ -536,6 +665,7 @@ export default function ImageConverter() {
             <li>• 트위터, 인스타그램에서 정상 작동합니다</li>
             <li>• 이미지의 원본 비율이 유지됩니다</li>
             <li>• GIF: 15MB 미만으로 화질이 고정됩니다</li>
+            <li>• 여러 이미지를 한번에 변환할 수 있습니다</li>
             <li>• 로컬로 구동되어 이미지 정보가 저장되지 않습니다</li>
             {isMobile && format === 'mp4' && !ffmpegLoaded && !ffmpegError && (
               <li className="text-yellow-500">• 모바일: 비디오 라이브러리 로딩 중...</li>
@@ -543,13 +673,115 @@ export default function ImageConverter() {
           </ul>
         </div>
 
-         <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
+        <div className={`${cardBg} rounded-2xl p-4 mt-4 text-center`}>
           <p className={`text-xs ${textSecondary}`}>
             오류 제보는{' '}
-            <span className="text-blue-500"> bistrobaek@gmail.com</span>
+            <span className="text-blue-500">bistrobaek@gmail.com</span>
           </p>
         </div>
       </div>
+
+      {/* 갤러리 모달 */}
+      {showGalleryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* 배경 오버레이 */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowGalleryModal(false)}
+          />
+
+          {/* 모달 콘텐츠 */}
+          <div className={`relative ${cardBg} rounded-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden shadow-2xl`}>
+            {/* 모달 헤더 */}
+            <div className={`flex justify-between items-center p-4 md:p-6 border-b ${isDark ? 'border-zinc-700' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-3">
+                <Images className="w-6 h-6 text-blue-500" />
+                <h2 className="text-xl font-bold">변환된 파일 ({gallery.length}개)</h2>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={downloadAllFiles}
+                  className={`${buttonBg} text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 text-sm`}
+                >
+                  <Download className="w-4 h-4" />
+                  전체 다운로드
+                </button>
+                <button
+                  onClick={() => setShowGalleryModal(false)}
+                  className={`p-2 rounded-full ${isDark ? 'hover:bg-zinc-700' : 'hover:bg-gray-200'} transition-colors`}
+                  aria-label="닫기"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 모달 바디 - 갤러리 그리드 */}
+            <div className="p-4 md:p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
+              {gallery.length === 0 ? (
+                <div className={`text-center py-12 ${textSecondary}`}>
+                  <Images className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                  <p>아직 변환된 파일이 없습니다</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {gallery.map((item, index) => (
+                    <div
+                      key={item.id}
+                      className={`${isDark ? 'bg-zinc-700/50' : 'bg-gray-100'} rounded-xl p-3 group hover:scale-[1.02] transition-transform`}
+                    >
+                      {/* 변환된 파일 미리보기 */}
+                      <div className="relative mb-3 rounded-lg overflow-hidden">
+                        {item.format === 'gif' ? (
+                          <img
+                            src={item.outputUrl}
+                            alt={`변환됨 ${index + 1}`}
+                            className="w-full h-28 md:h-32 object-cover"
+                          />
+                        ) : (
+                          <video
+                            src={item.outputUrl}
+                            className="w-full h-28 md:h-32 object-cover"
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                          />
+                        )}
+                        <span className={`absolute top-2 left-2 text-xs px-2 py-1 rounded-full font-medium ${item.format === 'gif'
+                            ? 'bg-purple-500 text-white'
+                            : 'bg-green-500 text-white'
+                          }`}>
+                          {item.format.toUpperCase()}
+                        </span>
+                      </div>
+
+                      {/* 원본 썸네일 */}
+                      <div className="flex items-center gap-2 mb-3">
+                        <img
+                          src={item.originalPreview}
+                          alt={`원본 ${index + 1}`}
+                          className="w-8 h-8 object-cover rounded"
+                        />
+                        <span className={`text-xs ${textSecondary}`}>원본</span>
+                      </div>
+
+                      {/* 다운로드 버튼 */}
+                      <button
+                        onClick={() => downloadFile(item.outputUrl, index)}
+                        className={`w-full ${buttonBg} text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-xs md:text-sm`}
+                      >
+                        <Download className="w-3 h-3 md:w-4 md:h-4" />
+                        다운로드
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
